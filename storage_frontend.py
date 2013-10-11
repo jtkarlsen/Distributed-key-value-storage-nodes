@@ -14,6 +14,21 @@ MAX_STORAGE_SIZE = 104857600	# Maximum total storage allowed (100 megabytes)
 storageBackendNodes = list()
 httpdServeRequests = True
 
+class Node:
+  def __init__(self, hostname, port):
+    self.hostname = hostname
+    self.port = port
+
+  def get_hostname(self):
+    return self.hostname
+
+  def get_port(self):
+    return self.port
+
+  def get_print(self):
+    return self.hostname + ":" + str(self.port)
+
+
 class StorageServerFrontend:
 	
 	def __init__(self):
@@ -24,7 +39,7 @@ class StorageServerFrontend:
 		node = random.choice(storageBackendNodes)
 		
 		try:
-			conn = httplib.HTTPConnection(node, self.portnumber)
+			conn = httplib.HTTPConnection(node.get_hostname(), node.get_port())
 			conn.request("GET", key)
 			response = conn.getresponse()
 			if response.status != 200:
@@ -44,7 +59,7 @@ class StorageServerFrontend:
 		node = random.choice(storageBackendNodes)
 
 		try:
-			conn = httplib.HTTPConnection(node, self.portnumber)
+			conn = httplib.HTTPConnection(node.get_hostname(), node.get_port())
 			conn.request("PUT", key, value)
 			response = conn.getresponse()
 			
@@ -126,7 +141,7 @@ class FrontendHTTPServer(BaseHTTPServer.HTTPServer):
 		
 class StorageServerTest:
 
-	testsToRun = 100
+	testsToRun = 1000
 
 	def __init__(self, url, portnumber):
 		self.url = url
@@ -174,7 +189,7 @@ class StorageServerTest:
 		print "GET(key, value):", key, value
 		node = random.choice(storageBackendNodes)
 		try:
-			conn = httplib.HTTPConnection(node, self.portnumber)
+			conn = httplib.HTTPConnection(node.get_hostname(), node.get_port())
 			conn.request("GET", key)
 			response = conn.getresponse()
 			if response.status != 200:
@@ -196,7 +211,7 @@ class StorageServerTest:
 		print "PUT(key, value):", key, value
 		node = random.choice(storageBackendNodes)
 		try:
-			conn = httplib.HTTPConnection(node, self.portnumber)
+			conn = httplib.HTTPConnection(node.get_hostname(), node.get_port())
 			conn.request("PUT", key, value)
 			response = conn.getresponse()
 			
@@ -229,8 +244,14 @@ if __name__ == '__main__':
 
 	# Nodelist
 	for node in args:
-		storageBackendNodes.append(node)
-		print "Added", node, "to the list of nodes"
+		try:
+			mylist = node.split(':')
+			node = Node(mylist[0], mylist[1])
+			storageBackendNodes.append(node)
+			print "Added", node.get_hostname(), "to the list of nodes"
+		except:
+			print '[--replicas=(number of nodereplications)] compute-1-1:port compute-1-1:port ... compute-N-M:port'
+			sys.exit(2)
 	
 	# Start the webserver which handles incomming requests
 	try:
