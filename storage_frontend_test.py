@@ -28,6 +28,17 @@ class Node:
 class StorageServerTest:
 
     testsToRun = 100
+    i = 0
+
+    def __init__(self):
+        self.pairs = dict()
+        for i in range(self.testsToRun):
+            while True:
+                key, value = self.generateKeyValuePair()
+                if key not in self.pairs:
+                    break
+            self.pairs[key] = value
+
         
     def generateKeyValuePair(self):
         key = ''
@@ -36,12 +47,13 @@ class StorageServerTest:
         for i in range(random.randint(10, 20)):
             key += random.choice(string.letters)
         
-        for i in range(random.randint(20,40)): #20,40
+        for i in range(random.randint(20,40)): 
             value += random.choice('1234567890')
         
         return key, value
 
     def run(self):
+        start_time = time.time()
         keyValuePairs = dict()
         
         # Generate random unique key, value pairs
@@ -65,10 +77,27 @@ class StorageServerTest:
                 print "Error getting", key, value
                 print "index: " + str(i) + ", of " + str(len(keyValuePairs))
                 return False
+
+        elapsed_time = time.time() - start_time
+        print "Time: " + str(elapsed_time)
         
         return True
     
-    
+    def put(self):
+        # Call put to insert the key/value pairs
+        for key, value in self.pairs.iteritems():
+            if self.putTestObject(key, value) != True:
+                print "Error putting", key, value
+                return False
+    def get(self):
+        i=0
+        # Validate that all key/value pairs are found
+        for key, value in self.pairs.iteritems():
+            i+=1
+            if self.getTestObject(key, value) != True:
+                print "Error getting", key, value
+                print "index: " + str(i) + ", of " + str(len(self.pairs))
+                return False
     def getTestObject(self, key, value):
         print "GET(key, value):", key, value
         node = front
@@ -127,10 +156,18 @@ def main():
      
     tests = StorageServerTest()
 
-    start_time = time.time()
-    tests.run()
-    elapsed_time = time.time() - start_time
-    print "Time: " + str(elapsed_time)
+    
+
+    
+
+    while True:
+        key = raw_input()
+        if key == "put":
+            tests.put()
+        if key == "get":
+            tests.get()
+        if key == "run":
+            tests.start()
 
     
 

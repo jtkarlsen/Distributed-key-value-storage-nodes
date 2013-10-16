@@ -190,7 +190,14 @@ class StorageServer:
       print "Stopping server.."
       httpd.stop()
 
-
+  def retryGet(key, iterations):
+    time.sleep(1)
+    if iterations > 3:
+      try:
+        return self
+      except:
+        return retryGet(key, iterations+1)
+    return False
   
   def sendGET(self, key):
     node = self.ch.get_machine(key)
@@ -200,7 +207,7 @@ class StorageServer:
       try:
         return self.map[key]
       except:
-        return False
+        return self.retryGet(key, 0)
 
     try:
       conn = httplib.HTTPConnection(hostname, port)
