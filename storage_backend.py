@@ -10,14 +10,18 @@ import socket
 import httplib
 import random
 import string
+from SocketServer import ThreadingMixIn
 
 
 MAX_CONTENT_LENGHT = 1024   # Maximum length of the content of the http request (1 kilobyte)
 MAX_STORAGE_SIZE = 104857600  # Maximum total storage allowed (100 megabytes)
-NUMBER_OF_REPLICAS = 100
+NUMBER_OF_REPLICAS = 300
 
 httpdServeRequests = True
-storageBackendNodes = list()
+
+socket.setdefaulttimeout(None)
+
+global storageBackendNodes
 
 
 #md5 hash function
@@ -56,6 +60,7 @@ class Node:
 class ConsistentHash:
 
     def __init__(self):
+        global storageBackendNodes
         self.num_replicas = NUMBER_OF_REPLICAS
         hash_tuples = [(n,k,my_hash(str(n.get_print())+"_"+str(k))) \
                        for n in storageBackendNodes \
@@ -97,53 +102,23 @@ class ConsistentHash:
 class StorageServer:
   
   def __init__(self):
+    global storageBackendNodes
     self.map = dict()
     self.size = 0
-    self.portnumber = 8000
-    self.controller = None
-
-    try:
-      print 'Argv: ', sys.argv[1:]
-      optlist, args = getopt.getopt(sys.argv[1:], 'x', ['replicas=', 'port=', 'controller='])
-      print 'Options: ', optlist
-    
-    except getopt.GetoptError:
-      print sys.argv[0] + ' [--replicas=(number of nodereplications)] compute-1-1:port compute-1-1:port ... compute-N-M:port'
-      sys.exit(2)
-
-    for opt, arg in optlist:
-        if opt in ("-replicas", "--replicas"):
-            NUMBER_OF_REPLICAS = int(arg)
-        if opt in ("-port", "--port"):
-            self.portnumber = int(arg)
-        if opt in ("-controller", "--controller"):
-            controller = str(arg)
-            li = controller.split(':')
-            self.controller = Node(li[0], li[1])
-
-
-    # Nodelist
-    for node in args:
-      try:
-        mylist = node.split(':')
-        node = Node(mylist[0], mylist[1])
-        storageBackendNodes.append(node)
-        print "Added", node.get_hostname(), "to the list of nodes"
-
-      except:
-        print '[--replicas=(number of nodereplications)] compute-1-1:port compute-1-1:port ... compute-N-M:port'
-        sys.exit(2)
 
     self.name = socket.gethostname()
-    self.node = Node(self.name, self.portnumber)
+    self.node = Node(self.name, portnumber)
     storageBackendNodes.append(self.node)
 
     self.ch = ConsistentHash()
     print "Format:"
     print "(machine,replica,hash value):"
     found = False
-    for (n,k,h) in self.ch.hash_tuples: 
-      print "(%s,%s,%s)" % (n.get_print(),k,h)
+    #for (n,k,h) in self.ch.hash_tuples: 
+      #print "(%s,%s,%s)" % (n.get_print(),k,h)
+
+  def getInf(self):
+    return " - Load: " + str(self.size) + " bytes, Keys: " + str(len(self.map))
 
   def distributeKeys(self):
     print "Start distributing"
@@ -162,12 +137,21 @@ class StorageServer:
       del self.map[key]
     print "Done distributing! New size=" + str(self.size)
 
+  def setPort(self, port):
+    self.node = Node(self.name, port)
+    storageBackendNodes[0] = Node(self.name, port)
 
   def sendJOIN(self):
     try:
-      conn = httplib.HTTPConnection(self.controller.get_hostname(), self.controller.get_port())
+      conn = httplib.HTTPConnection(controller.get_hostname(), controller.get_port())
       conn.request("PUT", "add", self.node.get_print())
       response = conn.getresponse()
+    except socket.timeout:
+      print "TIMEOUT"
+      return False
+    except socket.error:
+      print "SOCKET ERROR"
+      return False
     except:
       print "Unable to send JOIN request"
       return False
@@ -175,7 +159,7 @@ class StorageServer:
 
   def sendLEAVE(self):
     try:
-      conn = httplib.HTTPConnection(self.controller.get_hostname(), self.controller.get_port())
+      conn = httplib.HTTPConnection(controller.get_hostname(), controller.get_port())
       conn.request("PUT", "rem", self.node.get_print())
       response = conn.getresponse()
     except:
@@ -189,7 +173,13 @@ class StorageServer:
   def nodeJoining(self, node):
     self.ch.add_machine(node)
     print "Node joined: "+node.get_print()
-    print_nodes()
+    #print_nodes()
+    self.distributeKeys()
+
+  def listOfNodesJoining(self, nodes):
+    print "Adding list of nodes"
+    for node in nodes:
+      self.ch.add_machine(node)
     self.distributeKeys()
 
   def nodeLeaving(self, node):
@@ -206,32 +196,36 @@ class StorageServer:
     node = self.ch.get_machine(key)
     hostname = node.get_hostname()
     port = node.get_port()
-    if self.name == hostname:
-      if self.portnumber == port:
-        return self.map[key]
-
-    else:
+    if (self.name == hostname) and (portnumber == port):
       try:
-        conn = httplib.HTTPConnection(hostname, port)
-        conn.request("GET", key)
-        response = conn.getresponse()
-        if response.status != 200:
-          return False
-        
-        return response.read()
-
+        return self.map[key]
       except:
-        print "Unable to send GET request"
         return False
+
+    try:
+      conn = httplib.HTTPConnection(hostname, port)
+      conn.request("GET", key)
+      response = conn.getresponse()
+      if response.status != 200:
+        return False
+        
+      return response.read()
+
+    except:
+      print "Unable to send GET request"
+      return False
     
   def sendPUT(self, key, value, size):
     node = self.ch.get_machine(key)
     hostname = node.get_hostname()
     port = node.get_port()
-    if (self.name == hostname) and (self.portnumber == port):
-      self.size += size
-      self.map[key] = value
-      print "Got data! New size: " + str(self.size)
+    if (self.name == hostname) and (portnumber == port):
+      try:
+        self.size += size
+        self.map[key] = value
+      except:
+        print "Could not put"
+        return False
     else:
       try:
         conn = httplib.HTTPConnection(hostname, port)
@@ -248,13 +242,15 @@ class StorageServer:
 
 
 class HttpHandler(BaseHTTPServer.BaseHTTPRequestHandler):
-  global storage 
-  storage = StorageServer()
+  
   
   # Returns the 
   def do_GET(self):
     key = self.path
-    value = storage.sendGET(key)
+    if key == "inf":
+      value = storage.getInf()
+    else:
+      value = storage.sendGET(key)
     
     if value is None:
       self.sendErrorResponse(404, "Key not found")
@@ -285,6 +281,17 @@ class HttpHandler(BaseHTTPServer.BaseHTTPRequestHandler):
       node = Node(myparams[0], myparams[1])
       storage.nodeJoining(node)
 
+    elif self.path == "addlist":
+      res = self.rfile.read(contentLength)
+      nodes = res.split(',')
+      tempnodes = list()
+      for node in nodes:
+        myparams = node.split(':')
+        tempnode = Node(myparams[0], myparams[1])
+        tempnodes.append(tempnode)
+      storage.listOfNodesJoining(tempnodes)
+
+
     elif self.path == "rem":
       new_node = self.rfile.read(contentLength)
       myparams = new_node.split(':')
@@ -310,11 +317,11 @@ class HttpHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
 
 
-class HTTPServer(BaseHTTPServer.HTTPServer):
+class HTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
   
   def server_bind(self):
     BaseHTTPServer.HTTPServer.server_bind(self)
-    self.socket.settimeout(1)
+    self.socket.settimeout(None)
     self.run = True
 
   def get_request(self):
@@ -334,18 +341,17 @@ class HTTPServer(BaseHTTPServer.HTTPServer):
     while self.run == True:
       self.handle_request()
 
-
-
-
-
-def main():
-    httpserver_port = 8000
-    global httpd
-    global server_thread
-
-    # Start the webserver which handles incomming requests
-    try:
-      httpd = HTTPServer(("",httpserver_port), HttpHandler)
+def runServer(port, iterations):
+  global httpd
+  global portnumber
+  # Start the webserver which handles incomming requests
+  portnumber = port
+  storage.setPort(port)
+  #if iterations > 1:
+  #  sys.exit(2)
+  try:
+      httpd = HTTPServer(("",port), HttpHandler)
+      httpd.socket.settimeout(None)
       server_thread = threading.Thread(target = httpd.serve)
       server_thread.daemon = True
       server_thread.start()
@@ -359,11 +365,46 @@ def main():
 
       #Send join request
       storage.sendJOIN()
+
+      server_thread.join()
     
-    except:
-      print "Error: unable to http server thread"
+  except:
+    runServer(int(port)+1, int(iterations)+1)
 
-    #server_thread.join(100)
 
+def main():
+    global httpd
+    global server_thread
+    global portnumber
+    global storage
+    global controller
+    global storageBackendNodes
+    global iterations
+    iterations = 0
+    storageBackendNodes = list()
+
+    try:
+      print 'Argv: ', sys.argv[1:]
+      optlist, args = getopt.getopt(sys.argv[1:], 'x', ['port=', 'controller='])
+      print 'Options: ', optlist
+    
+    except getopt.GetoptError:
+      print sys.argv[0] + ' --port=(portnumber) --controller=(hostname.local:port)'
+      sys.exit(2)
+
+    for opt, arg in optlist:
+        if opt in ("-port", "--port"):
+            portnumber = int(arg)
+        if opt in ("-controller", "--controller"):
+            tempcontroller = str(arg)
+            li = tempcontroller.split(':')
+            controller = Node(li[0], li[1])
+
+     
+    storage = StorageServer()
+
+    runServer(portnumber, iterations)
+
+    
 
 if __name__ == '__main__': main()

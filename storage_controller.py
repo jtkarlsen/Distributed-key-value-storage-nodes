@@ -11,7 +11,7 @@ import httplib
 import random
 import string
 
-import time
+
 
 
 MAX_CONTENT_LENGHT = 1024   # Maximum length of the content of the http request (1 kilobyte)
@@ -19,6 +19,8 @@ MAX_STORAGE_SIZE = 104857600  # Maximum total storage allowed (100 megabytes)
 
 httpdServeRequests = True
 storageBackendNodes = list()
+
+socket.setdefaulttimeout(None)
 
 def remove_node(node):
   tempnode = None
@@ -30,6 +32,13 @@ def remove_node(node):
 def print_nodes():
   for node in storageBackendNodes:
     print node.get_print()
+
+def list_nodes():
+  nodes = ""
+  for node in storageBackendNodes:
+    nodes+=node.get_print()+","
+  nodes = nodes[:-1]
+  return nodes
 
 class Node:
   def __init__(self, hostname, port):
@@ -47,6 +56,22 @@ class Node:
 
 class ControllerServer:
 
+  def getInfo(self):
+    for node in storageBackendNodes:
+      try:
+        conn = httplib.HTTPConnection(node.get_hostname(), node.get_port())
+        conn.request("GET", "inf")
+        response = conn.getresponse()
+        if response.status != 200:
+          print "response.status != 200: " + response.reason
+          return False
+                
+        retrievedValue = response.read()
+        print node.get_print() + retrievedValue
+      except:
+        print "Unable to send GET request"
+    print "Number of nodes: " + str(len(storageBackendNodes))
+
   def sendADD(self, new_node):
 
     for node in storageBackendNodes:
@@ -57,12 +82,19 @@ class ControllerServer:
       except:
         print "Unable to send ADD request"
 
-      try:
-          conn = httplib.HTTPConnection(new_node.get_hostname(), new_node.get_port())
-          conn.request("PUT", "add", node.get_print())
-          response = conn.getresponse()
-      except:
-          print "Unable to send LIST request"    
+    try:
+        conn = httplib.HTTPConnection(new_node.get_hostname(), new_node.get_port())
+        conn.request("PUT", "addlist", list_nodes())
+        response = conn.getresponse()
+    except:
+        print "Unable to send LIST request"    
+
+    try:
+        conn = httplib.HTTPConnection(front.get_hostname(), front.get_port())
+        conn.request("PUT", "add",new_node.get_print())
+        response = conn.getresponse()
+    except:
+        print "Unable to send ADD request to frontend" 
     
   def sendREMOVE(self, old_node):
 
@@ -96,6 +128,13 @@ class ControllerServer:
         response = conn.getresponse()
       except:
         print "Unable to send REMOVE request"
+
+    try:
+        conn = httplib.HTTPConnection(front.get_hostname(), front.get_port())
+        conn.request("PUT", "rem",old_node.get_print())
+        response = conn.getresponse()
+    except:
+        print "Unable to send REMOVE request"    
 
 
 class HttpHandler(BaseHTTPServer.BaseHTTPRequestHandler):
@@ -146,7 +185,7 @@ class HTTPServer(BaseHTTPServer.HTTPServer):
   
   def server_bind(self):
     BaseHTTPServer.HTTPServer.server_bind(self)
-    self.socket.settimeout(1)
+    self.socket.settimeout(None)
     self.run = True
 
   def get_request(self):
@@ -173,12 +212,31 @@ class HTTPServer(BaseHTTPServer.HTTPServer):
 def main():
     SELF_PORT = 8000
     SELF_HOSTNAME = socket.gethostname()
+    global front
 
     print "Started! Waiting for nodes."
     print "My address is "+SELF_HOSTNAME+":"+str(SELF_PORT)
     # Start the webserver which handles incomming requests
+
+
+    try:
+      print 'Argv: ', sys.argv[1:]
+      optlist, args = getopt.getopt(sys.argv[1:], 'x', ['frontend='])
+      print 'Options: ', optlist
+    
+    except getopt.GetoptError:
+      print sys.argv[0] + ' [--frontend=(hostname.local:port)'
+      sys.exit(2)
+
+    for opt, arg in optlist:
+        if opt in ("-frontend", "--frontend"):
+            tempfront = str(arg)
+            li = tempfront.split(':')
+            front = Node(li[0], li[1])
+
     try:
       httpd = HTTPServer(("",SELF_PORT), HttpHandler)
+      httpd.socket.settimeout(None)
       server_thread = threading.Thread(target = httpd.serve)
       server_thread.daemon = True
       server_thread.start()
@@ -189,8 +247,8 @@ def main():
       signal.signal(signal.SIGINT, handler)
 
       while True:
-        print_nodes()
-        print "\nEnter a node to kill (hostname.local:port OR index):"
+        #print_nodes()
+        print "\nEnter a command or node to kill (hostname.local:port OR index): "
         key = raw_input()
 
         if key.isdigit() == True:
@@ -202,6 +260,8 @@ def main():
         for node in storageBackendNodes:
           if node.get_print() == key:
             ControllerServer().sendSafeREMOVE(node)
+        if key == "info":
+          ControllerServer().getInfo()
     except:
       print "Error: unable to http server thread"
 
